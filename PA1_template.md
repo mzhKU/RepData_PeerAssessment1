@@ -4,8 +4,6 @@ Martin Hediger
 ==============
 
 
-
-
 ## Loading and preprocessing the data
 
 
