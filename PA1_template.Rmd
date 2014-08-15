@@ -3,201 +3,421 @@
 Martin Hediger
 ==============
 
+## Introduction
+It is now possible to collect a large amount of data about personal movement using activity monitoring devices such as a Fitbit, Nike Fuelband, or Jawbone Up.
+These type of devices are part of the “quantified self” movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks.
+But these data remain under-utilized both because the raw data are hard to obtain and there is a lack of statistical methods and software for processing and interpreting the data.  
+This assignment makes use of data from a personal activity monitoring device.
+This device collects data at 5 minute intervals through out the day.
+The data consists of two months of data from an anonymous individual collected during the months of October and November, 2012 and include the number of steps taken in 5 minute intervals each day.
 
 ## Loading and preprocessing the data
-
-### 1. Loading the data
+### 1 Loading the data
 The data is loaded using
-
 ```{r cache=TRUE}
-dat <- read.csv("activity.csv", header=TRUE)
+d <- read.csv("activity.csv", header=TRUE)
 ```
+Note, the `activity.csv` file needs to be in the same working directory like this .Rmd report.
 
-### 2. Preprocessing the data
-Using `head(dat)` and `str(dat)` the data is inspected.
-Since the data appears tidy, no additional processing is carried out.
+### 2 Preprocessing the data
+Using `head(d)` and `str(d)` the data is inspected.
+The data appears to be tidy, but the `interval` variable, which responds to a daytime, is encoded as an `int` which does not make much sense (i.e. there are discontinuities at every full our from e.g. 2255 to 2300 or from 2355 to 0).  
+Therefore, the data is processed in that a time and date encoding variable is added to the data set.
+This is done using the `data.table` package which allows for easy addition of a new column `dateint` which combines the date and the interval.
+```{r}
+library(data.table)
+d <- as.data.table(d)
+d[, dateint:=paste(as.character(d$date), sprintf("%04d", d$interval))]
+str(d)
+```
+Before the `dateint` variable can be converted to POSIXlt, the data.table object needs to be converted back to data.frame type.
+```{r}
+d <- as.data.frame(d)
+d$dateint <- strptime(d$dateint, format="%Y-%m-%d %H%M")
+str(d)
+```
+Now we have what we want.
 
 ## What is mean total number of steps taken per day?
+Before answering the specific questions, first a couple of exploratory steps are taken to gain a better understanding of the data.
+In an exploratory spirit, the first thing that comes to mind when reading this question is just to plot the steps against the date.
+```{r fig.height=4}
+par(mar=c(3,3,1,1))
+plot(d$dateint, d$steps)
+```  
 
-### 1 Histogram of the total number of steps taken each day
-Using `tapply`, the data is factorized by date and then the `sum` function is applied to each cluster of data.
-The histogram of the so calculated daily total steps looks as follows.
+**Analysis.**
+As seen, the informational value of this plot is limited.
+Probably the only real information gained from this plot is that there are days with missing values (gaps on x axis), but also this information is only appriximate because it could be that a day is partially `NA`.  
+But nevertheless, the plot helps a lot in understanding what is asked for and also provides a number of immediate observations:  
+1 Not all days have data  
+2 There are multiple data points per day  
+3 What would make sense is to get a plot of day time(x) vs. steps(y)  
+4 Ideally, this plot would have light gray lines for the individual days and a solid black line for the average of all the days  
+5 As an exercise, in this plot one could have a say 4 lines for times 08:00, 12:00, 16:00 and 22:00 connecting the respective points of each day.  
+6 Also realized, each day has multiple data points, but each interval (i.e. time has only one data point for each day)  
+7 Another meaningful plot would be the number of steps of each day (y) against the time from october to december (x).
 
+A data point (i.e. row) can be specified using an inline `strptime` object:
 ```{r}
-hist(tapply(dat$steps, dat$date, sum, na.rm=TRUE), breaks=10,
-     main="Daily Total Step Distribution", xlab="Daily Total Steps", 
+d[d$dateint==strptime("2012-10-20 1600", format="%Y-%m-%d %H%M"), ]
+```
+All data points at 4 pm can be found by using `intervall==1600` as an argument to the `which` function:
+```{r}
+d[which(d$interval==1600), ]$steps
+```
+The first sanity check is to notice that indeed, the length of this result is 61, which corresponds to the number of days in the data set (so every day, it is 4 pm at one point in time).
+But also apparently, not every day has a `steps` value for the 4 pm recording.
+
+Just to get a slightly better feeling for what is going on in the data, I'm highlighting the data points corresponding to 8 am and 4 pm specifically within the plot by overlaying with with the total data.
+```{r fig.height=4}
+# ('fig.height=5' used in knitr code chunk)
+par(mar=c(3, 3, 0.5, 0.5))
+# All data points
+plot(x=d$dateint,
+     y=d$steps,
+     cex=0.4, ylim=c(-100, max(d$steps, na.rm=T)), pch=1
+)
+par(new=T)
+# Highlight 08:00 data points
+plot(x=as.Date(levels(d$date)),
+     y=d[which(d$interval==0800), ]$steps,
+     axes=F, col=3, pch=19, ylim=c(-100, max(d$steps, na.rm=T)),
+     xlab="", ylab=""
+)
+par(new=T)
+# Highlight 16:00 data points
+plot(x=as.Date(levels(d$date)),
+     y=d[which(d$interval==1600), ]$steps,
+     axes=F, col=2, pch=19, ylim=c(-100, max(d$steps, na.rm=T)),
+     xlab="", ylab=""
+)
+par(new=F)
+legend("bottom", legend=c("All", "08:00", "16:00"),
+       col=c(1, 3, 2), pch=c(1, 19, 19), ncol=3, box.lwd=0
 )
 ```
 
-### 2 Mean and median total number of steps taken per day
-To illustrate, the number of steps on a specific day can be calculated by:
+Notes:
+- It would be cool if the colored data points could be plotted as open circles such that it can be seen how they exactly enclose a black data point
+- Using a lattice plot, one could plot for different categorical variables like morning, noon, evening or weekdays
 
+### 1 Histogram of the total number of steps taken each day (ignoring NA)
+I will show a `base` graphics, `lattice` and `ggplot2` version of the histogram.
+
+**Preparation.**  
+This histogram should have 'Daily total number of steps' on the x-axis and 'Frequency' on the y-axis.  
+So for each day, we need the total number of steps.
+The `table` function could give a first result.
 ```{r}
-sum(dat[dat$date=="2012-11-29", 1])
+head(table(d$steps, d$date)[,1:3], 3)
 ```
-
-Calculating the number of steps on each day can be done by calling:
-
-```{r, results="hide"}
-tapply(dat$steps, dat$date, sum, na.rm=TRUE)
-```
-
-The result of this calculation can also be obtained as a list (with appropriately labeled columns) by using `melt`:
-
+So day `2012-10-02` has 286 `0` value entries, that means the `table` function is returning for each day, how many times the appropriate number of steps (0, 1, 2, ..., 806) are measured.
+So the table function doesn't exactly seem to give what I was hoping for.  
+What seems to be a better tool is the `xtabs` function.
 ```{r}
-library(reshape2)
-daily_sum <- melt(tapply(dat$steps, dat$date, sum, na.rm=TRUE))
-colnames(daily_sum) <- c("Date", "Daily_Sum")
-head(daily_sum)
+xtabs(d$steps ~ d$date)[1:5]
 ```
-
-The mean total numer of steps is then (removing `NA` values):
-
+The meaning of this output is verified by manually calculating the number of steps for days `2012-10-02` and `2012-10-03`.
 ```{r}
-mean(daily_sum$Daily_Sum, na.rm=TRUE)
+sum(d[d$date=="2012-10-02", ]$steps)
+sum(d[d$date=="2012-10-03", ]$steps)
 ```
 
-Similary, the median over all steps over the whole observation period is then
+**base**  
+So the `xtabs` result should in principle be useable as an argument to build the histogram.
+```{r fig.height=5}
+par(mar=c(4,4,1,1))
+hist(xtabs(d$steps ~ d$date),
+     main="", xlab="Total Daily Steps", ylab="Count", breaks=10)
+```
 
+*Sidenote 1.*
+The total number of steps per day can also be calculated using `tapply`.
 ```{r}
-median(daily_sum$Daily_Sum, na.rm=TRUE)
+tapply(d$steps, INDEX=d$date, FUN=sum)[1:5]
+```
+What seems to be different is that, per default, `xtabs` returns 0 for `NA` values and `tapply` returns `NA`.  
+*Sidenote 2.*
+It might be convenient to have the total number of steps per day, for each row, appended as a new column to `d` (see also lecture `03-04_reshapingData` for a way of doing this using `ddply`).
+```{r}
+d$tds <- ave(d$steps, d$date, FUN=sum)
 ```
 
+**lattice**  
+In order to do so, first a new *total daily steps* data frame `tds` is created and `Freq` column is renamed appropriately.
+```{r}
+tds <- as.data.frame(xtabs(d$steps ~ d$date))
+colnames(tds) <- c("d.date", "Sum")
+str(tds)
+```
+This data frame can be used as argument to the `histogram` function of `lattice`.
+```{r fig.height=5}
+library(lattice)
+histogram(x=tds$Sum, breaks=10, xlab="Total Daily Steps", type="count")
+```
 
+Notes:
+- The tics at the upper and right edges of the histogram are kind of useless
+
+**ggplot2**  
+A plot created using `ggplot2` requires an *aesthetics* and a *geom* (whatever that means).
+```{r fig.height=5}
+library(ggplot2)
+m <- ggplot(tds, aes(Sum))
+p <- m + stat_bin(binwidth=2000, color="black")
+print(p)
+```
+
+### 2 Mean and median total number of steps taken per day (ignoring NA)
+```{r}
+mean(tds$Sum)
+median(tds$Sum)
+``` 
 
 
 ## What is the average daily activity pattern?
-
 ### 1 Time series plot of 5-minute interval and average number of steps taken
-
-In the plot, the *x*-axis are just the interval values and the *y*-axis values are the averages of the steps taken during each day specific interval point.
-First, the values for the x-axis are collect. These can be arbitrarily from any day (since all days ran throught the same interval) and are subsequently converted to POSIX format.
-
+As discussed above, a number of entries are `NA` which can not be handled by `plot`.
+A logical convenience variable `available` indicates values with available `steps` count.
 ```{r}
-x <- dat[dat$date=="2012-10-01", 3]
-xs <- sprintf("%04d", x)
-xt <- strptime(xs, format="%H%M")
+d$available <- !is.na(d$steps)
 ```
+For this plot, the average `steps` of all 08:00, all 08:05, all 08:10, ... interval time points over all days need to be calculated.
+The daytime mean steps `dms` are written to a new `day` data frame with corresponding minute time interval.
+```{r fig.height=5, fig.width=10}
+# Required to prevent 'd' from being reordered according to 'd$interval'
+# when using 'lapply'.
+d$intervalchar <- sprintf("%04d", d$interval)
 
-Then the values for the y-axis are collected.
-Here, the aggregate function can be used to calculate the mean over all days at a particular interval-value (`agsteps`)
-
-```{r, fig.width=10}
-agsteps <- aggregate(. ~ interval, data=dat, FUN=mean)[2]
-plot(xt, agsteps[[1]], type="l", xlab="Day Time", ylab="Aggregated Steps")
+day <- data.frame(
+           min=levels(factor(d$intervalchar)),
+           dms=unlist(
+                  lapply(
+                      split(d[d$available, ]$steps,
+                            levels(factor(d[d$available, ]$intervalchar))
+                      ), 
+                      FUN=mean
+                  )
+              )
+       )
+# Required for 'scale_x_datetime(..., date_format())'.
+library(scales)
+m <- ggplot(day, aes(x=strptime(min, format="%H%M"), y=dms))
+m <- m + geom_line(size=2, colour=2)
+m <- m + scale_x_datetime(breaks="2 hours", labels=date_format("%H:%M"))
+m <- m + xlab("Daytime") + ylab("Daytime Mean Steps")
+m <- m + theme(text=element_text(size=20))
+print(m)
 ```
 
 ### 2 Maximum number of steps in 5-minute interval
-
+The maximum number of steps can be extracted using the `which` function.
 ```{r}
-max(agsteps)
-maxinterval <- which(agsteps==max(agsteps))
-xt[maxinterval]
+day[which(day$dms==max(day$dms)), ]$dms
+format(strptime(day[which(day$dms==max(day$dms)), ]$min, format="%H%M"), "%H:%M")
 ```
-
-The average maximum number of steps (206) are within the interval at 08:35 in the morning.
-
+On average over all days, the interval with the largest number of steps (around 206) is at around half past eight in the morning.
 
 
 ## Imputing missing values
-
 ### 1 Total number of missing values
-
-A separate data frame consisting only of the data where `steps` are missing is constructed and by using the fact that R considers a `TRUE` value to equal 1, the number of `NA` values is calculated using `sum`:
-
+The total number of missing values can be calculated by making use of the fact that logical values are evaluated when summing.
+The previously prepared `available` variable can be used.
 ```{r}
-nas <- dat[is.na(dat$steps), ]
-sum(is.na(nas$steps))
+sum(!d$available)
 ```
 
-### 2+3 Strategy for filling in missing values
-
-Inspired by a [Stackoverflow](http://stackoverflow.com/questions/9322773/how-to-replace-na-with-mean-by-subset-in-r-impute-with-plyr/9322975#9322975) post, first a replacement function is defined:
-
+### 2 Strategy for filling in missing values
+First, using a custom function `check_day`, the dates with `NA` values are identified and the number of `NA` values per day are counted.
+It is found that days are either completely `NA` or they have exclusively non-`NA` values (including zero).
 ```{r}
-library(plyr)
-impute.mean <- function(x){
-    replace(x, is.na(x), mean(x, na.rm=TRUE))
+# Custom function to check if 'NA' are mixed with zero or non-zero values in days.
+# The 'ind' variable gets passed by implicitly from 'lapply'/'seq_along'.
+check_day <- function(ind)
+{
+    # I'm not totally sure, but I think
+    # '[[' gives the atomic elements (class integer) and '[' gives
+    # the list section of 'ind' (class list).
+    if(any(is.na(split(d$steps, d$date)[[ind]])))
+    {
+        print(
+            paste(
+                # Get date of current day.
+                names(split(d$steps, d$date)[ind]),
+                sum(is.na(split(d$steps, d$date)[[ind]]))
+            )
+        )
+    }
 }
-```
 
-Then, an auxilary data frame is created:
-
-```{r}
-imputed <- ddply(dat[1:3], .(interval), transform, steps=impute.mean(steps), date=date, interval=interval)
-```
-
-Finally, the new data has to be sorted by date and interval:
-
-```{r}
-imputed <- imputed[order(imputed$date, imputed$interval), ]
-head(imputed)
-```
-
-Each `NA` value is now being replaced by it's mean from all days.
-
-### 4 Histogram of total number of steps each day
-
-Similarly to above:
-
-```{r}
-hist(tapply(imputed$steps, imputed$date, sum), breaks=10,
-     main="Total Number of Steps Each Day\nwith NA Values Replaced by Day-mean",
-     xlab="Daily Total Steps"
+# 'invisible' prevents 'lapply' output, keep only 'check_day' output,
+# 'seq_along' is used to provide list indeces as arguments to 'check_day'.
+invisible(
+    lapply(
+        seq_along(split(d$steps, d$date)),
+        FUN=check_day
+    )
 )
 ```
+A basic check of the output verifies that there are 8*288=2304 missing values (same as above).
+Also this check shows that the first suggestion in the instruction does not make sense ("[...]you could use the mean for that day..."), because no day with `NA` values has any values.  
 
-Calculating the mean and median of total number steps taken per day:
+**Strategy for `NA` imputing**  
+The value for `steps` of days with `NA` values will be substituted by the average `steps` profile `dms`.
+The way this is done is closely related to the above function, see next section.
 
+### 3 New dataset equal to original dataset but with filled in missing data
+A new data table object is created which `NA` values being replaced by the value of the daily mean steps `dms` variable for the days where steps are `NA`, i.e. all days which are previously `NA` now have the `dms` profile.
 ```{r}
-imputed_daily_sum <- melt(tapply(imputed$steps, imputed$date, sum))
-mean(imputed_daily_sum$value)
-median(imputed_daily_sum$value)
+# 'POSIXlt' variable does not seem to work in data.table object.
+dimp <- d[, c(1, 2, 3, 5, 6, 7)]
+dimp <- as.data.table(dimp)
+impute <- function(ind)
+{
+    if(any(is.na(split(dimp$steps, dimp$date)[[ind]])))
+    {
+        current_day <- names(split(dimp$steps, dimp$date)[ind])
+
+        # Making use of plyr like operations possible on data.table
+        # objects to define a new column 'imputed'.
+        dimp[dimp$date==current_day, imputed:=day$dms]
+    }
+}
+
+invisible(
+    lapply(
+        seq_along(split(d$steps, d$date)),
+        FUN=impute
+    )
+)
+
+# For inspection.
+dimp$imputed[c(280:300, 660:680)]
 ```
 
-The values are different (obviously) from the above calculations, where missing values were not substituted by mean values.
+`dimp` now exactly has values in row where `d` is `NA` (they're complementary so to speak), so the values from `d` are inserted into `dimp`.
+```{r}
+# Column 7 is for the new data (old + imputed).
+dimp[d$available, 7] <- d[d$available, 1]
+```
+It is seen that the `NA` values of `imputed` are now substituted, also no `NA` values are present any longer in `imputed`.
+```{r}
+dimp$imputed[c(280:300, 660:680)]
+d$steps[c(280:300, 660:680)]
+any(is.na(dimp$imputed))
+```
+The new (`dimp`) and the original (`d`) dataset are equal except for the `imputed` column and the `date` column which the intermediary data.table couldn't handle.
+```{r}
+dimp <- as.data.frame(dimp)
+str(dimp)
+str(d)
+```
 
+### 4 Histogram of total number of steps each day
+A histogram of the newly created data set.
+```{r fig.height=5, fig.width=10}
+tdsImp <- as.data.frame(xtabs(dimp$imputed ~ dimp$date))
+colnames(tdsImp) <- c("d.date", "ImputedSum")
+
+# lattice version
+#histogram(x=tdsImp$ImputedSum,
+#          breaks=10,
+#          xlab="Total Daily Imputed Steps",
+#          type="count",
+#          main="Count Histogram using Imputed Values")
+#str(tdsImp)
+
+par(mfrow=c(1, 2))
+hist(xtabs(d$steps ~ d$date),
+     main="(Same from above with a bit more breaks)",
+     xlab="Total Daily Steps",
+     ylab="Count", breaks=40)
+hist(x=tdsImp$ImputedSum, main="Total Daily Imputed Steps",
+     ylab="Count", breaks=40)
+```
+
+Most strickingly, the large bar at the far left of the histogram where `NA` have not been imputed disappeared.  
+The mean and median for the new data are calculated analogously to above.
+```{r}
+mean(tdsImp$ImputedSum)
+median(tdsImp$ImputedSum)
+``` 
+The differences to above are
+`mean(tdsImp$ImputedSum) - mean(tds$Sum)` = 
+`r mean(tdsImp$ImputedSum) - mean(tds$Sum)`
+and
+`median(tdsImp$ImputedSum) - median(tds$Sum)` =
+`r median(tdsImp$ImputedSum) - median(tds$Sum)`.
+So both the mean and median slightly increased.
+  
 ## Are there differences in activity patterns between weekdays and weekends?
-
 ### 1 New factor variable: Weekday/Weekend
-
-First, a logical vector is created which identifies weekend days in the imputed data which is then appended to the imputed data set:
-
+First assign the weekday to a new column (using the imputed data).
 ```{r}
-weekend <- weekdays(strptime(imputed$date, format="%Y-%m-%d")) %in% c("Samstag", "Sonntag")
-imputed$weekend <- weekend
+dimp$day <- weekdays(strptime(dimp$date, format="%Y-%m-%d"), abbreviate=F)
+
+# Using a German version of R.
+dimp$weekend <- dimp$day %in% c("Samstag", "Sonntag")
+
+# Refactor.
+dimp$weekendfactor <- ifelse(dimp$weekend, "Weekend", "Weekday")
+dimp$weekendfactor <- as.factor(dimp$weekendfactor,
+                                levels=c("Weekend", "Weekday"),
+                                labels=c("Weekend", "Weekday"))
+str(dimp)
 ```
 
-So if `imputed$weekend == TRUE`, the day corresponds to a weekend day.
+### 2 Panel plot to discern weekday from weekend activity
+Two separate datasets are created to untangle the weekdays from the weekends.
+Then they are again combined such that first all weekend data is and then all weekday data.
+```{r, fig.height=5, fig.width=10}
+impWd <- base::subset(dimp, weekendfactor=="Weekday",
+                      select=c("imputed", "intervalchar", "date", "weekendfactor")
+)
+impWe <- base::subset(dimp, weekendfactor=="Weekend",
+                      select=c("imputed", "intervalchar", "date", "weekendfactor")
+)
+impWdWe <- data.frame(
+    min=strptime(dimp$intervalchar, format="%H%M"),
+    wdmean=unlist(
+              lapply(
+                 split(
+                    impWd$imputed, levels(factor(impWd$intervalchar))
+                 ),
+                  FUN=mean)
+              ),
+    wemean=unlist(
+              lapply(
+                 split(
+                    impWe$imputed, levels(factor(impWe$intervalchar))
+                 ),
+                  FUN=mean)
+              )
+)
 
-### Panel plot to discern weekday from weekend activity
+str(impWdWe)
 
-Create two separate data frames using the imputed data:
+par(mfrow=c(1, 2))
+plot(x=impWdWe$min, y=impWdWe$wdmean, type="l")
+plot(x=impWdWe$min, y=impWdWe$wemean, type="l")
 
-```{r}
-acday <- imputed[!imputed$weekend, ]
-acend <- imputed[imputed$weekend, ]
+# m <- ggplot(dimp, aes(x=strptime(intervalchar, format="%H%M"), y=imputed))
+# m <- m + geom_line() + facet_grid(".~weekendfactor")
 ```
 
-Then calculating the aggregated means for the two data sets.
+## Notes/Outlook
 
-```{r}
-agday <- aggregate(. ~ interval, data=acday, FUN=mean)
-agend <- aggregate(. ~ interval, data=acend, FUN=mean)
-```
+To do/Optional:
+- Overlay average day pattern with all day patterns
+- Do the weekend/weekday comparison plot using facets/ggplot2
+- Find a solution which avoids creation of many new data frames (impWe, impWd)- try working with the existing factors
+- Add standard deviation bars/'smooth' to `dms` plot (see lecture 'ggplot2', exploratory analysis week 2)
 
-Combining the two to form a new data fram which is used for plotting.
+Questions:
+- When calculating the interval average over all days, how could that
+  average be appended as a column to the data frame?
+  I.e. that for every interval entry, there is also the corresponding
+  average entry available.
 
-```{r}
-comb <- rbind(agday, agend)
-str(comb)
-levels(factor(comb$weekend))
-```
 
-Weekdays now have the `weekend` variable set to `0` and weekends to `1`.
-The variable is cast to a factor:
-
-```{r}
-library(lattice)
-xyplot(steps ~ interval|factor(weekend), data=comb, layout=c(1,2), type="l")
-```
